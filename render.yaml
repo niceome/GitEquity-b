@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: gitequity-backend
+    runtime: java
+    buildCommand: ./gradlew bootJar -x test
+    startCommand: java -jar build/libs/*.jar
+    envVars:
+      - key: DB_URL
+        fromDatabase:
+          name: gitequity-db
+          property: jdbcInternalConnectionString
+      - key: DB_USERNAME
+        fromDatabase:
+          name: gitequity-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: gitequity-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: OAUTH2_REDIRECT_URI
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+
+databases:
+  - name: gitequity-db
+    databaseName: gitequity
+    plan: free
