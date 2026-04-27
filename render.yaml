@@ -5,10 +5,18 @@ services:
     buildCommand: ./gradlew bootJar -x test
     startCommand: java -jar build/libs/*.jar
     envVars:
-      - key: DB_URL
+      - key: DB_HOST
         fromDatabase:
           name: gitequity-db
-          property: jdbcInternalConnectionString
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: gitequity-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: gitequity-db
+          property: database
       - key: DB_USERNAME
         fromDatabase:
           name: gitequity-db
