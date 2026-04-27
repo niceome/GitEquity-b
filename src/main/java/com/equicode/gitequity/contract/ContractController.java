@@ -61,6 +61,16 @@ public class ContractController {
         return ApiResponse.ok("signed successfully", detail);
     }
 
+    // ── 계약 삭제 ────────────────────────────────────────────────────────────
+
+    @DeleteMapping("/api/contracts/{contractId}")
+    public ApiResponse<Void> delete(
+            @PathVariable Long contractId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        contractService.deleteContract(contractId, principal.getId());
+        return ApiResponse.ok("contract deleted", null);
+    }
+
     // ── Phase F: PDF 다운로드 ─────────────────────────────────────────────────
 
     @GetMapping("/api/contracts/{contractId}/pdf")

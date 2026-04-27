@@ -50,4 +50,8 @@ public class EquitySnapshot {
     public void linkContract(Contract contract) {
         this.contract = contract;
     }
+
+    public void unlinkContract() {
+        this.contract = null;
+    }
 }

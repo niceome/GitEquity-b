@@ -264,6 +264,28 @@ public class ContractService {
         });
     }
 
+    // ── 계약 삭제 (DRAFT/PENDING만, OWNER만) ────────────────────────────────────
+
+    @Transactional
+    public void deleteContract(Long contractId, Long requestUserId) {
+        Contract contract = contractRepository.findById(contractId)
+                .orElseThrow(() -> new CustomException(ErrorCode.CONTRACT_NOT_FOUND));
+
+        if (contract.getStatus() == ContractStatus.COMPLETED) {
+            throw new CustomException(ErrorCode.CONTRACT_NOT_DELETABLE);
+        }
+
+        projectMemberRepository.findByProjectIdAndUserId(
+                        contract.getProject().getId(), requestUserId)
+                .filter(m -> m.getRole() == MemberRole.OWNER)
+                .orElseThrow(() -> new CustomException(ErrorCode.FORBIDDEN));
+
+        snapshotRepository.findByContractId(contractId).forEach(EquitySnapshot::unlinkContract);
+        signatureRepository.deleteAll(signatureRepository.findByContractId(contractId));
+        contractRepository.delete(contract);
+        log.info("[Contract] deleted id={}", contractId);
+    }
+
     // ── 목록 조회 ─────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)

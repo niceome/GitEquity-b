@@ -26,6 +26,7 @@ public enum ErrorCode {
     CONTRACT_NOT_FOUND(HttpStatus.NOT_FOUND, "계약을 찾을 수 없습니다."),
     CONTRACT_NOT_SENDABLE(HttpStatus.BAD_REQUEST, "DRAFT 상태의 계약만 발송할 수 있습니다."),
     CONTRACT_NOT_SIGNABLE(HttpStatus.BAD_REQUEST, "PENDING 상태의 계약만 서명할 수 있습니다."),
+    CONTRACT_NOT_DELETABLE(HttpStatus.BAD_REQUEST, "완료된 계약은 삭제할 수 없습니다."),
     SIGNATURE_NOT_FOUND(HttpStatus.NOT_FOUND, "서명 대상자가 아닙니다."),
     ALREADY_SIGNED(HttpStatus.CONFLICT, "이미 서명한 계약입니다."),
 
