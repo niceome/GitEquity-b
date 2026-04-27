@@ -30,7 +30,8 @@ public enum ErrorCode {
     ALREADY_SIGNED(HttpStatus.CONFLICT, "이미 서명한 계약입니다."),
 
     // GitHub
-    GITHUB_API_ERROR(HttpStatus.BAD_GATEWAY, "GitHub API 오류가 발생했습니다.");
+    GITHUB_API_ERROR(HttpStatus.BAD_GATEWAY, "GitHub API 오류가 발생했습니다."),
+    REPO_NOT_FOUND(HttpStatus.BAD_REQUEST, "GitHub 레포지토리를 찾을 수 없습니다. owner/repo 이름을 확인하세요.");
 
     private final HttpStatus status;
     private final String message;

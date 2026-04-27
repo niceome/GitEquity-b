@@ -122,6 +122,24 @@ public class GithubApiClient {
                 .block();
     }
 
+    // ── Repository 존재 확인 ──────────────────────────────────────────────────
+
+    public boolean repositoryExists(String owner, String repo, String token) {
+        try {
+            githubWebClient.get()
+                    .uri("/repos/{owner}/{repo}", owner, repo)
+                    .header("Authorization", "Bearer " + token)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::isError, this::handleError)
+                    .bodyToMono(RepositoryDto.class)
+                    .block();
+            return true;
+        } catch (GithubApiException e) {
+            if (e.getStatusCode() == 404) return false;
+            throw e;
+        }
+    }
+
     // ── Error handling ────────────────────────────────────────────────────────
 
     private Mono<? extends Throwable> handleError(ClientResponse response) {

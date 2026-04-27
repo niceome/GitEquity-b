@@ -16,8 +16,8 @@ spring:
         implicit-strategy: org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy
     properties:
       hibernate:
-        format_sql: true
-    show-sql: true
+        format_sql: false
+    show-sql: false
     open-in-view: false
 
   flyway:
@@ -40,24 +40,12 @@ spring:
             user-info-uri: https://api.github.com/user
             user-name-attribute: login
 
-jwt:
-  secret: ${JWT_SECRET}
-  expiry: ${JWT_EXPIRY:86400000}
-
-github:
-  api:
-    base-url: https://api.github.com
-  webhook:
-    secret: ${GITHUB_WEBHOOK_SECRET}
-  collection:
-    cron: "0 0 18 * * *"   # 매일 새벽 3시 KST (UTC 18:00)
-
-spring:
+  # 아래의 mail과 thymeleaf를 기존 spring: 블록 안으로 이동시켰습니다.
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
+    username: ${MAIL_USERNAME:gkgk@naver.com}
+    password: ${MAIL_PASSWORD:kkkkk}
     properties:
       mail:
         smtp:
@@ -71,7 +59,33 @@ spring:
     suffix: .html
     cache: false
 
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# spring 블록 밖의 설정들
+jwt:
+  secret: ${JWT_SECRET}
+  expiry: ${JWT_EXPIRY:86400000}
+
+github:
+  api:
+    base-url: https://api.github.com
+  webhook:
+    secret: ${GITHUB_WEBHOOK_SECRET}
+  collection:
+    cron: "0 0 18 * * *"
+
 app:
   oauth2:
     redirect-uri: ${OAUTH2_REDIRECT_URI:http://localhost:5173/oauth/callback}
   base-url: ${APP_BASE_URL:http://localhost:8080}
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
+    org.hibernate.type.descriptor.sql: WARN
+    com.zaxxer.hikari: WARN

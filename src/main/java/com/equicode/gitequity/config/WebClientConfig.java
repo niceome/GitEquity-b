@@ -3,6 +3,8 @@ package com.equicode.gitequity.config;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
@@ -27,15 +29,19 @@ public class WebClientConfig {
     @Value("${github.api.base-url}")
     private String githubBaseUrl;
 
-    @Bean
-    public ObjectMapper githubObjectMapper() {
+    // GitHub API 전용 — Spring 빈으로 등록하지 않아 MVC ObjectMapper에 영향 없음
+    private ObjectMapper buildGithubMapper() {
         return new ObjectMapper()
+                .registerModule(new JavaTimeModule())
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false)
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     }
 
     @Bean
-    public WebClient githubWebClient(ObjectMapper githubObjectMapper) {
+    public WebClient githubWebClient() {
+        ObjectMapper githubMapper = buildGithubMapper();
+
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
                 .responseTimeout(Duration.ofSeconds(30))
@@ -45,9 +51,9 @@ public class WebClientConfig {
 
         ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(config -> {
-                    config.defaultCodecs().maxInMemorySize(16 * 1024 * 1024); // 16MB
-                    config.defaultCodecs().jackson2JsonDecoder(new Jackson2JsonDecoder(githubObjectMapper));
-                    config.defaultCodecs().jackson2JsonEncoder(new Jackson2JsonEncoder(githubObjectMapper));
+                    config.defaultCodecs().maxInMemorySize(16 * 1024 * 1024);
+                    config.defaultCodecs().jackson2JsonDecoder(new Jackson2JsonDecoder(githubMapper));
+                    config.defaultCodecs().jackson2JsonEncoder(new Jackson2JsonEncoder(githubMapper));
                 })
                 .build();
 
