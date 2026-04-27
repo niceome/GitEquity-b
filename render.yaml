@@ -1,9 +1,7 @@
 services:
   - type: web
     name: gitequity-backend
-    runtime: java
-    buildCommand: ./gradlew bootJar -x test
-    startCommand: java -jar build/libs/*.jar
+    runtime: docker
     envVars:
       - key: DB_HOST
         fromDatabase:
