@@ -29,7 +29,7 @@ GitHub 레포지토리의 기여 데이터를 분석하여 팀원별 **지분(Eq
 | Infra | Docker, Docker Compose, Nginx |
 
 ## 디렉토리 구조
-
+```
 GitEquity/
 ├── backend/          # Spring Boot REST API
 │   └── src/main/java/com/equicode/gitequity/
@@ -54,6 +54,7 @@ GitEquity/
 │       └── types/    # TypeScript 타입 정의
 ├── fearson/          # Python 분석 스크립트
 └── docker-compose.yml
+```
 
 ## 시작하기
 
