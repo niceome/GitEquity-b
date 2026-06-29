@@ -14,6 +14,9 @@ import java.util.*;
  * effectiveWeight 우선순위:
  *   1. 프로젝트 weightConfig 에 해당 type 키가 있으면 사용
  *   2. 없으면 ContributionType.getWeight() 기본값 사용
+ *
+ * COMMIT/PR은 집계 대상에서 제외된다 — 측정 단위가 PrContribution 기반
+ * "PR 최종 diff 실질 변경량"으로 이전되었기 때문 (후속 단계에서 결합).
  */
 @Component
 public class TypeScoreCalculator {
@@ -29,6 +32,7 @@ public class TypeScoreCalculator {
 
         for (Contribution c : contributions) {
             if (c.getUser() == null) continue;
+            if (c.getType() == ContributionType.COMMIT || c.getType() == ContributionType.PR) continue;
 
             double weight = effectiveWeight(c.getType(), weightConfig);
             double score  = c.getCount() * c.getCcnScore() * c.getFileImportance() * weight;

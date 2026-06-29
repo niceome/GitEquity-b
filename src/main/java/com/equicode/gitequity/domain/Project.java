@@ -46,7 +46,24 @@ public class Project extends BaseEntity {
     @Column(columnDefinition = "jsonb")
     private Map<String, Double> weightConfig;
 
+    // 프로젝트 단계: null이면 ACTIVE로 간주 (기존 데이터 호환)
+    @Getter(AccessLevel.NONE)
+    @Enumerated(EnumType.STRING)
+    private ProjectPhase phase;
+
+    public ProjectPhase getPhase() {
+        return phase != null ? phase : ProjectPhase.ACTIVE;
+    }
+
     public void updateWeightConfig(Map<String, Double> weightConfig) {
         this.weightConfig = weightConfig;
+    }
+
+    public void startProject() {
+        this.phase = ProjectPhase.ACTIVE;
+    }
+
+    public void completeProject() {
+        this.phase = ProjectPhase.COMPLETED;
     }
 }

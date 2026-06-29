@@ -8,7 +8,8 @@ public record CommitDto(
         GitHubUser author      // GitHub 계정 (null = 미등록 이메일)
 ) {
     public record CommitDetail(
-            CommitAuthor author
+            CommitAuthor author,
+            String message      // 전체 커밋 메시지 (Co-authored-by 트레일러 파싱용, S12)
     ) {}
 
     public record CommitAuthor(

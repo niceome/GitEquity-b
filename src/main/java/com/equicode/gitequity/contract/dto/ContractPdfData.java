@@ -1,10 +1,12 @@
 package com.equicode.gitequity.contract.dto;
 
+import com.equicode.gitequity.domain.ContractType;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** PDF 생성에 필요한 계약 데이터 */
 public record ContractPdfData(
+        ContractType contractType,
         Long contractId,
         String projectName,
         String repoOwner,
@@ -15,7 +17,7 @@ public record ContractPdfData(
 ) {
     public record MemberPdfRow(
             String username,
-            double percentage,
+            Double equity,         // null for INITIAL, actual % for FINAL
             double rawScore,
             int commits,
             int prs,

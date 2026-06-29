@@ -10,6 +10,7 @@ import com.equicode.gitequity.contract.dto.ContractPdfData;
 import com.equicode.gitequity.contract.pdf.ContractPdfService;
 import com.equicode.gitequity.contract.storage.ContractStorageService;
 import com.equicode.gitequity.email.EmailService;
+import com.equicode.gitequity.equity.EquityCalculatorService;
 import com.equicode.gitequity.equity.EquitySnapshotService;
 import com.equicode.gitequity.equity.SnapshotSummary;
 import com.equicode.gitequity.repository.*;
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -40,103 +41,115 @@ public class ContractService {
     private final ContractPdfService       pdfService;
     private final ContractStorageService   storageService;
 
-    // ── Phase A: 계약 초안 생성 ───────────────────────────────────────────────
+    // ── INITIAL 계약 생성 (PLANNING 단계, OWNER 전용) ─────────────────────────
 
     @Transactional
     public ContractResponse createContract(Long projectId, Long requestUserId) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_NOT_FOUND));
 
-        // OWNER만 계약 생성 가능
-        ProjectMember requester = projectMemberRepository
-                .findByProjectIdAndUserId(projectId, requestUserId)
-                .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_MEMBER_NOT_FOUND));
-        if (requester.getRole() != MemberRole.OWNER) {
-            throw new CustomException(ErrorCode.FORBIDDEN);
+        requireOwner(projectId, requestUserId);
+
+        if (project.getPhase() != ProjectPhase.PLANNING) {
+            throw new CustomException(ErrorCode.INVALID_PROJECT_PHASE);
         }
 
-        // 최신 스냅샷 조회 → 없으면 새로 생성
-        LocalDateTime snapshotAt = snapshotRepository
-                .findTopByProjectIdOrderBySnapshotAtDesc(projectId)
-                .map(EquitySnapshot::getSnapshotAt)
-                .orElseGet(() -> {
-                    SnapshotSummary created = snapshotService.createSnapshot(projectId);
-                    return created.snapshotAt();
-                });
-
-        // snapshotGroupId = snapshotAt epoch second (배치 식별자)
-        long snapshotGroupId = snapshotAt.toEpochSecond(java.time.ZoneOffset.UTC);
+        List<ProjectMember> members = projectMemberRepository.findByProjectId(projectId);
 
         Contract contract = Contract.builder()
                 .project(project)
                 .status(ContractStatus.DRAFT)
+                .contractType(ContractType.INITIAL)
+                .createdAt(LocalDateTime.now())
+                .build();
+        contract = contractRepository.save(contract);
+
+        final Contract fc = contract;
+        List<Signature> signatures = members.stream()
+                .map(m -> Signature.builder().contract(fc).user(m.getUser()).build())
+                .toList();
+        signatureRepository.saveAll(signatures);
+
+        log.info("[Contract] INITIAL created id={} project={} members={}", contract.getId(), projectId, members.size());
+        return ContractResponse.from(contract);
+    }
+
+    // ── FINAL 계약 생성 (ProjectService.completeProject() 에서 호출) ──────────
+
+    @Transactional
+    public ContractResponse createFinalContract(Project project) {
+        Long projectId = project.getId();
+
+        SnapshotSummary snapshot = snapshotService.createSnapshot(projectId);
+        if (snapshot.users().isEmpty()) {
+            throw new CustomException(ErrorCode.INVALID_PROJECT_PHASE);
+        }
+
+        LocalDateTime snapshotAt = snapshot.snapshotAt();
+        long snapshotGroupId = snapshotAt.toEpochSecond(ZoneOffset.UTC);
+
+        Contract contract = Contract.builder()
+                .project(project)
+                .status(ContractStatus.DRAFT)
+                .contractType(ContractType.FINAL)
                 .snapshotGroupId(snapshotGroupId)
                 .createdAt(LocalDateTime.now())
                 .build();
         contract = contractRepository.save(contract);
 
-        // 스냅샷에 계약 연결
-        List<EquitySnapshot> snapshots = snapshotRepository
-                .findByProjectIdAndSnapshotAt(projectId, snapshotAt);
-        for (EquitySnapshot snapshot : snapshots) {
-            snapshot.linkContract(contract);
-        }
+        List<EquitySnapshot> snapshots = snapshotRepository.findByProjectIdAndSnapshotAt(projectId, snapshotAt);
+        for (EquitySnapshot s : snapshots) s.linkContract(contract);
 
-        // 멤버 전원에 대한 미서명 Signature 레코드 생성
         List<ProjectMember> members = projectMemberRepository.findByProjectId(projectId);
-        final Contract finalContract = contract;
-        List<Signature> signatures = members.stream()
-                .map(m -> Signature.builder()
-                        .contract(finalContract)
-                        .user(m.getUser())
-                        .build())
-                .toList();
-        signatureRepository.saveAll(signatures);
+        final Contract fc = contract;
+        signatureRepository.saveAll(members.stream()
+                .map(m -> Signature.builder().contract(fc).user(m.getUser()).build())
+                .toList());
 
-        log.info("[Contract] created id={} project={} members={}", contract.getId(), projectId, members.size());
+        log.info("[Contract] FINAL created id={} project={}", contract.getId(), projectId);
         return ContractResponse.from(contract);
     }
 
-    // ── Phase A: 계약 상세 조회 ───────────────────────────────────────────────
+    // ── 계약 상세 조회 ────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public ContractDetailResponse getContract(Long contractId) {
         Contract contract = contractRepository.findById(contractId)
                 .orElseThrow(() -> new CustomException(ErrorCode.CONTRACT_NOT_FOUND));
 
+        ContractType type = contract.getContractType();
         List<Signature> signatures = signatureRepository.findByContractId(contractId);
-        List<EquitySnapshot> snapshots = snapshotRepository.findByContractId(contractId);
 
-        // snapshotId → percentage 매핑
-        Map<Long, Double> percentageByUser = snapshots.stream()
-                .collect(Collectors.toMap(s -> s.getUser().getId(), EquitySnapshot::getPercentage));
+        // 실제 지분 (EquitySnapshot — FINAL 계약에만 존재)
+        Map<Long, Double> finalEquityByUser = Map.of();
+        if (type == ContractType.FINAL) {
+            finalEquityByUser = snapshotRepository.findByContractId(contractId).stream()
+                    .collect(Collectors.toMap(s -> s.getUser().getId(), EquitySnapshot::getPercentage));
+        }
 
+        final Map<Long, Double> finalEq = finalEquityByUser;
         List<MemberSignatureStatus> members = signatures.stream()
-                .map(sig -> new MemberSignatureStatus(
-                        sig.getUser().getId(),
-                        sig.getUser().getUsername(),
-                        percentageByUser.getOrDefault(sig.getUser().getId(), 0.0),
-                        sig.getSignedAt() != null,
-                        sig.getSignedAt()))
+                .map(sig -> {
+                    Long uid = sig.getUser().getId();
+                    double pct = finalEq.getOrDefault(uid, 0.0);
+                    return new MemberSignatureStatus(
+                            uid, sig.getUser().getUsername(),
+                            pct,
+                            sig.getSignedAt() != null, sig.getSignedAt());
+                })
                 .sorted((a, b) -> Double.compare(b.percentage(), a.percentage()))
                 .toList();
 
         long signedCount = signatures.stream().filter(s -> s.getSignedAt() != null).count();
 
         return new ContractDetailResponse(
-                contract.getId(),
-                contract.getProject().getId(),
-                contract.getProject().getName(),
-                contract.getStatus(),
-                contract.getPdfUrl(),
-                contract.getCreatedAt(),
-                contract.getCompletedAt(),
-                signatures.size(),
-                signedCount,
-                members);
+                contract.getId(), contract.getProject().getId(), contract.getProject().getName(),
+                type, contract.getStatus(), contract.getPdfUrl(),
+                contract.getCreatedAt(), contract.getCompletedAt(),
+                signatures.size(), signedCount, members);
     }
 
-    // ── Phase A: 서명 요청 발송 (DRAFT → PENDING) ─────────────────────────────
+    // ── 서명 요청 발송 (DRAFT → PENDING) ─────────────────────────────────────
 
     @Transactional
     public ContractResponse sendContract(Long contractId, Long requestUserId) {
@@ -147,33 +160,13 @@ public class ContractService {
             throw new CustomException(ErrorCode.CONTRACT_NOT_SENDABLE);
         }
 
-        // OWNER 검증
-        projectMemberRepository.findByProjectIdAndUserId(
-                contract.getProject().getId(), requestUserId)
-                .filter(m -> m.getRole() == MemberRole.OWNER)
-                .orElseThrow(() -> new CustomException(ErrorCode.FORBIDDEN));
-
+        requireOwner(contract.getProject().getId(), requestUserId);
         contract.send();
-
-        // Phase C: 멤버 전원에게 서명 요청 이메일 발송 (비동기)
-        ContractDetailResponse detail = getContract(contractId);
-        List<Signature> sigs = signatureRepository.findByContractId(contractId);
-        sigs.forEach(sig -> {
-            String email = sig.getUser().getEmail();
-            if (email != null && !email.isBlank()) {
-                emailService.sendSignRequest(
-                        email,
-                        sig.getUser().getUsername(),
-                        contract.getProject().getName(),
-                        contractId,
-                        detail.members());
-            }
-        });
 
         return ContractResponse.from(contract);
     }
 
-    // ── Phase B: 전자서명 ──────────────────────────────────────────────────────
+    // ── 전자서명 ──────────────────────────────────────────────────────────────
 
     @Transactional
     public ContractDetailResponse sign(Long contractId, Long userId, String ipAddress) {
@@ -192,27 +185,85 @@ public class ContractService {
             throw new CustomException(ErrorCode.ALREADY_SIGNED);
         }
 
-        signature.sign(ipAddress);
+        signature.sign(ipAddress, EquityCalculatorService.ALGORITHM_VERSION);
 
-        // 전원 서명 완료 여부 확인
         long total  = signatureRepository.countByContractId(contractId);
         long signed = signatureRepository.countByContractIdAndSignedAtIsNotNull(contractId);
         if (signed == total) {
-            log.info("[Contract] all {} members signed contractId={} — triggering completion", total, contractId);
+            log.info("[Contract] all {} members signed contractId={}", total, contractId);
             onAllSigned(contract);
         }
 
         return getContract(contractId);
     }
 
-    // ── 전원 서명 완료 후 처리 ───────────────────────────────────────────────
+    // ── 전원 서명 완료 처리 ───────────────────────────────────────────────────
 
     protected void onAllSigned(Contract contract) {
+        if (contract.getContractType() == ContractType.INITIAL) {
+            onInitialContractAllSigned(contract);
+        } else {
+            onFinalContractAllSigned(contract);
+        }
+    }
+
+    private void onInitialContractAllSigned(Contract contract) {
+        Long contractId = contract.getId();
+        Long projectId = contract.getProject().getId();
+
+        // 프로젝트 ACTIVE로 전환
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_NOT_FOUND));
+        project.startProject();
+
+        // 참여자 명단만 포함한 PDF 생성 (지분 미확정)
+        List<ProjectMember> members = projectMemberRepository.findByProjectId(projectId);
+        List<Signature> signatures = signatureRepository.findByContractId(contractId);
+        Map<Long, Signature> sigByUser = signatures.stream()
+                .collect(Collectors.toMap(s -> s.getUser().getId(), s -> s));
+
+        List<ContractPdfData.MemberPdfRow> rows = members.stream()
+                .map(m -> {
+                    Signature sig = sigByUser.get(m.getUser().getId());
+                    return new ContractPdfData.MemberPdfRow(
+                            m.getUser().getUsername(),
+                            null,
+                            0.0, 0, 0, 0, 0,
+                            sig != null ? sig.getSignedAt() : null,
+                            sig != null ? sig.getIpAddress() : null);
+                })
+                .sorted((a, b) -> a.username().compareTo(b.username()))
+                .toList();
+
+        ContractPdfData pdfData = new ContractPdfData(
+                ContractType.INITIAL, contractId,
+                contract.getProject().getName(),
+                contract.getProject().getRepoOwner(),
+                contract.getProject().getRepoName(),
+                contract.getCreatedAt(), LocalDateTime.now(), rows);
+
+        byte[] pdfBytes = pdfService.generate(pdfData);
+        String pdfUrl = storageService.uploadPdf(pdfBytes, contractId);
+        contract.complete(pdfUrl);
+        log.info("[Contract] INITIAL completed id={} → project ACTIVE", contractId);
+
+        // 완료 이메일
+        List<MemberSignatureStatus> statuses = getContract(contractId).members();
+        signatures.forEach(sig -> {
+            String email = sig.getUser().getEmail();
+            if (email != null && !email.isBlank()) {
+                emailService.sendContractCompleted(
+                        email, sig.getUser().getUsername(),
+                        contract.getProject().getName(), pdfUrl, statuses);
+            }
+        });
+    }
+
+    private void onFinalContractAllSigned(Contract contract) {
         Long contractId = contract.getId();
 
-        // 1. 스냅샷 + 서명 데이터 수집
         List<EquitySnapshot> snapshots = snapshotRepository.findByContractId(contractId);
-        List<Signature> signatures     = signatureRepository.findByContractId(contractId);
+        List<Signature> signatures = signatureRepository.findByContractId(contractId);
 
         Map<Long, Signature> sigByUser = signatures.stream()
                 .collect(Collectors.toMap(s -> s.getUser().getId(), s -> s));
@@ -224,47 +275,40 @@ public class ContractService {
                             snap.getUser().getUsername(),
                             snap.getPercentage(),
                             snap.getRawScore(),
-                            snap.getTotalCommits(),
-                            snap.getTotalPrs(),
-                            snap.getTotalReviews(),
-                            snap.getTotalIssues(),
+                            snap.getTotalCommits(), snap.getTotalPrs(),
+                            snap.getTotalReviews(), snap.getTotalIssues(),
                             sig != null ? sig.getSignedAt() : null,
                             sig != null ? sig.getIpAddress() : null);
                 })
-                .sorted((a, b) -> Double.compare(b.percentage(), a.percentage()))
+                .sorted((a, b) -> Double.compare(
+                        b.equity() != null ? b.equity() : 0.0,
+                        a.equity() != null ? a.equity() : 0.0))
                 .toList();
 
         ContractPdfData pdfData = new ContractPdfData(
-                contractId,
+                ContractType.FINAL, contractId,
                 contract.getProject().getName(),
                 contract.getProject().getRepoOwner(),
                 contract.getProject().getRepoName(),
-                contract.getCreatedAt(),
-                LocalDateTime.now(),
-                rows);
+                contract.getCreatedAt(), LocalDateTime.now(), rows);
 
-        // 2. PDF 생성 → 저장 → 계약 완료
         byte[] pdfBytes = pdfService.generate(pdfData);
-        String pdfUrl   = storageService.uploadPdf(pdfBytes, contractId);
+        String pdfUrl = storageService.uploadPdf(pdfBytes, contractId);
         contract.complete(pdfUrl);
-        log.info("[Contract] completed id={} pdfUrl={}", contractId, pdfUrl);
+        log.info("[Contract] FINAL completed id={}", contractId);
 
-        // 3. 완료 이메일 (비동기)
-        List<MemberSignatureStatus> memberStatuses = getContract(contractId).members();
+        List<MemberSignatureStatus> statuses = getContract(contractId).members();
         signatures.forEach(sig -> {
             String email = sig.getUser().getEmail();
             if (email != null && !email.isBlank()) {
                 emailService.sendContractCompleted(
-                        email,
-                        sig.getUser().getUsername(),
-                        contract.getProject().getName(),
-                        pdfUrl,
-                        memberStatuses);
+                        email, sig.getUser().getUsername(),
+                        contract.getProject().getName(), pdfUrl, statuses);
             }
         });
     }
 
-    // ── 계약 삭제 (DRAFT/PENDING만, OWNER만) ────────────────────────────────────
+    // ── 계약 삭제 ─────────────────────────────────────────────────────────────
 
     @Transactional
     public void deleteContract(Long contractId, Long requestUserId) {
@@ -275,10 +319,7 @@ public class ContractService {
             throw new CustomException(ErrorCode.CONTRACT_NOT_DELETABLE);
         }
 
-        projectMemberRepository.findByProjectIdAndUserId(
-                        contract.getProject().getId(), requestUserId)
-                .filter(m -> m.getRole() == MemberRole.OWNER)
-                .orElseThrow(() -> new CustomException(ErrorCode.FORBIDDEN));
+        requireOwner(contract.getProject().getId(), requestUserId);
 
         snapshotRepository.findByContractId(contractId).forEach(EquitySnapshot::unlinkContract);
         signatureRepository.deleteAll(signatureRepository.findByContractId(contractId));
@@ -295,7 +336,7 @@ public class ContractService {
                 .toList();
     }
 
-    // ── Phase F: PDF 다운로드 ─────────────────────────────────────────────────
+    // ── PDF 다운로드 ──────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public PdfDownloadResult downloadPdf(Long contractId) {
@@ -306,38 +347,51 @@ public class ContractService {
             return PdfDownloadResult.redirect(contract.getPdfUrl());
         }
 
-        // DRAFT/PENDING: 미리보기 PDF 온더플라이 생성
-        List<EquitySnapshot> snapshots = snapshotRepository.findByContractId(contractId);
-        List<Signature> signatures     = signatureRepository.findByContractId(contractId);
-
+        ContractType type = contract.getContractType();
+        List<Signature> signatures = signatureRepository.findByContractId(contractId);
         Map<Long, Signature> sigByUser = signatures.stream()
                 .collect(Collectors.toMap(s -> s.getUser().getId(), s -> s));
 
-        List<ContractPdfData.MemberPdfRow> rows = snapshots.stream()
-                .map(snap -> {
-                    Signature sig = sigByUser.get(snap.getUser().getId());
-                    return new ContractPdfData.MemberPdfRow(
-                            snap.getUser().getUsername(),
-                            snap.getPercentage(),
-                            snap.getRawScore(),
-                            snap.getTotalCommits(),
-                            snap.getTotalPrs(),
-                            snap.getTotalReviews(),
-                            snap.getTotalIssues(),
-                            sig != null ? sig.getSignedAt() : null,
-                            sig != null ? sig.getIpAddress() : null);
-                })
-                .sorted((a, b) -> Double.compare(b.percentage(), a.percentage()))
-                .toList();
+        List<ContractPdfData.MemberPdfRow> rows;
+
+        if (type == ContractType.INITIAL) {
+            rows = projectMemberRepository.findByProjectId(contract.getProject().getId()).stream()
+                    .map(m -> {
+                        Signature sig = sigByUser.get(m.getUser().getId());
+                        return new ContractPdfData.MemberPdfRow(
+                                m.getUser().getUsername(),
+                                null,
+                                0.0, 0, 0, 0, 0,
+                                sig != null ? sig.getSignedAt() : null,
+                                sig != null ? sig.getIpAddress() : null);
+                    })
+                    .sorted((a, b) -> a.username().compareTo(b.username()))
+                    .toList();
+        } else {
+            rows = snapshotRepository.findByContractId(contractId).stream()
+                    .map(snap -> {
+                        Signature sig = sigByUser.get(snap.getUser().getId());
+                        return new ContractPdfData.MemberPdfRow(
+                                snap.getUser().getUsername(),
+                                snap.getPercentage(),
+                                snap.getRawScore(),
+                                snap.getTotalCommits(), snap.getTotalPrs(),
+                                snap.getTotalReviews(), snap.getTotalIssues(),
+                                sig != null ? sig.getSignedAt() : null,
+                                sig != null ? sig.getIpAddress() : null);
+                    })
+                    .sorted((a, b) -> Double.compare(
+                            b.equity() != null ? b.equity() : 0.0,
+                            a.equity() != null ? a.equity() : 0.0))
+                    .toList();
+        }
 
         ContractPdfData pdfData = new ContractPdfData(
-                contractId,
+                type, contractId,
                 contract.getProject().getName(),
                 contract.getProject().getRepoOwner(),
                 contract.getProject().getRepoName(),
-                contract.getCreatedAt(),
-                null,
-                rows);
+                contract.getCreatedAt(), null, rows);
 
         byte[] pdfBytes = pdfService.generate(pdfData);
         return PdfDownloadResult.bytes(pdfBytes, "contract-" + contractId + "-preview.pdf");
@@ -350,5 +404,13 @@ public class ContractService {
         static PdfDownloadResult bytes(byte[] bytes, String filename) {
             return new PdfDownloadResult(false, null, bytes, filename);
         }
+    }
+
+    // ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
+
+    private void requireOwner(Long projectId, Long userId) {
+        projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
+                .filter(m -> m.getRole() == MemberRole.OWNER)
+                .orElseThrow(() -> new CustomException(ErrorCode.FORBIDDEN));
     }
 }

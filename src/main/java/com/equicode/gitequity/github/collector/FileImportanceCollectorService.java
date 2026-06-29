@@ -14,13 +14,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.OptionalDouble;
+import java.util.*;
 
 /**
- * PR별 변경 파일의 경로 기반 중요도를 계산하여 contribution.fileImportance를 업데이트한다.
- * 이력 기반 통계는 현재 DB의 기여 데이터로 보완한다.
+ * COMMIT·PR 기여의 fileImportance를 계산한다.
+ *
+ * 처리 순서:
+ *   1. PR·COMMIT 기여의 변경 파일 목록을 각각 GitHub API로 조회 (단일 패스)
+ *   2. 조회 결과로 파일별 (변경 횟수, 기여자 집합) 집계 → FileHistoryStats 맵 생성
+ *   3. 기여별로 변경 파일들의 평균 fileImportance 계산 후 저장
  */
 @Slf4j
 @Service
@@ -33,64 +35,85 @@ public class FileImportanceCollectorService {
 
     @Transactional
     public int collect(Project project, String token) {
-        List<Contribution> prContributions =
+        List<Contribution> prContribs =
                 contributionRepository.findByProjectIdAndType(project.getId(), ContributionType.PR);
+        List<Contribution> commitContribs =
+                contributionRepository.findByProjectIdAndType(project.getId(), ContributionType.COMMIT);
 
-        int updated = 0;
-        for (Contribution contribution : prContributions) {
+        // 기여별 변경 파일 목록을 한 번만 조회 (삽입 순서 보장)
+        Map<Contribution, List<PullRequestFileDto>> contribFiles = new LinkedHashMap<>();
+        for (Contribution c : prContribs) {
             try {
-                double importance = calcImportanceForPr(
-                        project, token, Integer.parseInt(contribution.getGithubId()));
-                contribution.applyFileImportance(importance, ContributionType.PR.getWeight());
-                updated++;
+                contribFiles.put(c, fetchAllPrFiles(project, token, Integer.parseInt(c.getGithubId())));
             } catch (Exception e) {
-                log.warn("[FileImportance] failed PR={} project={}: {}",
-                        contribution.getGithubId(), project.getRepoName(), e.getMessage());
+                log.warn("[FileImportance] fetch failed PR={} project={}: {}",
+                        c.getGithubId(), project.getRepoName(), e.getMessage());
+            }
+        }
+        for (Contribution c : commitContribs) {
+            try {
+                contribFiles.put(c, githubApiClient.fetchCommitFiles(
+                        project.getRepoOwner(), project.getRepoName(), c.getGithubId(), token));
+            } catch (Exception e) {
+                log.warn("[FileImportance] fetch failed COMMIT={} project={}: {}",
+                        c.getGithubId(), project.getRepoName(), e.getMessage());
             }
         }
 
-        log.info("[FileImportance] project={} updated={}/{}", project.getRepoName(), updated, prContributions.size());
+        // 파일별 변경 횟수·기여자 집합 집계
+        Map<String, FileHistoryStats> fileStatsMap = buildFileStatsMap(contribFiles);
+
+        // 기여별 fileImportance 반영
+        int updated = 0;
+        for (Map.Entry<Contribution, List<PullRequestFileDto>> entry : contribFiles.entrySet()) {
+            Contribution c = entry.getKey();
+            double importance = calcImportanceForFiles(entry.getValue(), fileStatsMap);
+            c.applyFileImportance(importance, c.getType().getWeight());
+            updated++;
+        }
+
+        log.info("[FileImportance] project={} updated={} files tracked={}",
+                project.getRepoName(), updated, fileStatsMap.size());
         return updated;
     }
 
-    // ── PR의 변경 파일 목록을 가져와 평균 fileImportance를 반환 ───────────────
+    // ── 파일별 집계 맵 생성 ───────────────────────────────────────────────────
 
-    private double calcImportanceForPr(Project project, String token, int pullNumber) {
-        List<PullRequestFileDto> files = fetchAllPrFiles(project, token, pullNumber);
+    private Map<String, FileHistoryStats> buildFileStatsMap(
+            Map<Contribution, List<PullRequestFileDto>> contribFiles) {
 
-        // 파일별 경로 기반 중요도 수집 (제거된 파일 제외)
+        Map<String, Integer> changeCounts = new HashMap<>();
+        Map<String, Set<Long>> contributorSets = new HashMap<>();
+
+        for (Map.Entry<Contribution, List<PullRequestFileDto>> entry : contribFiles.entrySet()) {
+            Long userId = entry.getKey().getUser().getId();
+            for (PullRequestFileDto file : entry.getValue()) {
+                if ("removed".equals(file.status())) continue;
+                changeCounts.merge(file.filename(), 1, Integer::sum);
+                contributorSets.computeIfAbsent(file.filename(), k -> new HashSet<>()).add(userId);
+            }
+        }
+
+        Map<String, FileHistoryStats> result = new HashMap<>();
+        changeCounts.forEach((filename, count) -> {
+            int contributorCount = contributorSets.getOrDefault(filename, Set.of()).size();
+            result.put(filename, new FileHistoryStats(count, contributorCount, 0));
+        });
+        return result;
+    }
+
+    // ── 변경 파일 목록의 평균 fileImportance 반환 ─────────────────────────────
+
+    private double calcImportanceForFiles(List<PullRequestFileDto> files,
+                                          Map<String, FileHistoryStats> fileStatsMap) {
         List<Double> scores = new ArrayList<>();
         for (PullRequestFileDto file : files) {
             if ("removed".equals(file.status())) continue;
-
-            // 이력 통계: 이 파일 경로와 관련된 커밋/기여 수를 DB에서 집계
-            FileHistoryStats stats = buildHistoryStats(project.getId(), file.filename());
-            double score = fileImportanceCalculator.calculate(file.filename(), stats);
-            scores.add(score);
+            FileHistoryStats stats = fileStatsMap.getOrDefault(file.filename(), FileHistoryStats.empty());
+            scores.add(fileImportanceCalculator.calculate(file.filename(), stats));
         }
-
         OptionalDouble avg = scores.stream().mapToDouble(Double::doubleValue).average();
-        return avg.orElse(1.0);  // 변경 파일 없으면 기본값
-    }
-
-    /**
-     * DB의 기존 기여 데이터로 파일 이력 통계를 근사한다.
-     * - changeCount   : 이 파일이 포함된 PR의 총 기여 건수 (프로젝트 내 전체)
-     * - contributorCount: 해당 파일에 기여한 고유 사용자 수 (PR 단위 근사)
-     * 실제 파일 경로 단위의 커밋 이력은 GitHub API를 추가 호출해야 하지만,
-     * 비용을 줄이기 위해 현재 DB 데이터로 대체한다.
-     */
-    private FileHistoryStats buildHistoryStats(Long projectId, String filename) {
-        List<Contribution> allPrContribs =
-                contributionRepository.findByProjectIdAndType(projectId, ContributionType.PR);
-
-        int changeCount      = allPrContribs.size();  // PR 수 = 파일 변경 빈도의 근사값
-        long contributorCount = allPrContribs.stream()
-                .map(c -> c.getUser().getId())
-                .distinct()
-                .count();
-
-        return new FileHistoryStats(changeCount, (int) contributorCount, 0);
+        return avg.orElse(1.0);
     }
 
     private List<PullRequestFileDto> fetchAllPrFiles(Project project, String token, int pullNumber) {

@@ -26,30 +26,6 @@ public class EmailService {
     @Value("${spring.mail.username:noreply@gitequity.com}")
     private String from;
 
-    @Value("${app.base-url:http://localhost:8080}")
-    private String baseUrl;
-
-    // ── 서명 요청 이메일 ───────────────────────────────────────────────────────
-
-    @Async("collectorExecutor")
-    public void sendSignRequest(String toEmail, String recipientName,
-                                 String projectName, Long contractId,
-                                 List<MemberSignatureStatus> members) {
-        try {
-            Context ctx = new Context();
-            ctx.setVariable("recipientName", recipientName);
-            ctx.setVariable("projectName", projectName);
-            ctx.setVariable("members", members);
-            ctx.setVariable("signUrl", baseUrl + "/contracts/" + contractId + "/sign");
-            ctx.setVariable("expiresAt", "7일");
-
-            String html = templateEngine.process("email/sign-request", ctx);
-            send(toEmail, "[GitEquity] " + projectName + " 지분 계약서 서명 요청", html);
-        } catch (Exception e) {
-            log.error("Failed to send sign-request email to {}: {}", toEmail, e.getMessage());
-        }
-    }
-
     // ── 계약 완료 이메일 ───────────────────────────────────────────────────────
 
     @Async("collectorExecutor")

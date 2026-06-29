@@ -1,6 +1,7 @@
 package com.equicode.gitequity.project.dto;
 
 import com.equicode.gitequity.domain.Project;
+import com.equicode.gitequity.domain.ProjectPhase;
 
 import java.time.LocalDateTime;
 
@@ -11,7 +12,8 @@ public record ProjectResponse(
         String repoName,
         String repoUrl,
         int memberCount,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        ProjectPhase phase
 ) {
     public static ProjectResponse from(Project p, int memberCount) {
         return new ProjectResponse(
@@ -21,6 +23,7 @@ public record ProjectResponse(
                 p.getRepoName(),
                 p.getRepoUrl(),
                 memberCount,
-                p.getCreatedAt());
+                p.getCreatedAt(),
+                p.getPhase());
     }
 }

@@ -2,6 +2,8 @@ package com.equicode.gitequity.project;
 
 import com.equicode.gitequity.common.exception.CustomException;
 import com.equicode.gitequity.common.exception.ErrorCode;
+import com.equicode.gitequity.contract.ContractService;
+import com.equicode.gitequity.contract.dto.ContractResponse;
 import com.equicode.gitequity.domain.*;
 import com.equicode.gitequity.github.collector.CollectionResult;
 import com.equicode.gitequity.github.collector.ContributionCollectionService;
@@ -29,13 +31,13 @@ public class ProjectService {
     private final SignatureRepository      signatureRepository;
     private final com.equicode.gitequity.github.GithubApiClient githubApiClient;
     private final ContributionCollectionService contributionCollectionService;
+    private final ContractService          contractService;
 
-    // ── 프로젝트 목록 (참여한 모든 프로젝트) ──────────────────────────────────
+    // ── 프로젝트 목록 ─────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<ProjectResponse> listProjects(Long userId) {
-        List<ProjectMember> memberships = projectMemberRepository.findByUserId(userId);
-        return memberships.stream()
+        return projectMemberRepository.findByUserId(userId).stream()
                 .map(m -> {
                     int count = projectMemberRepository.findByProjectId(m.getProject().getId()).size();
                     return ProjectResponse.from(m.getProject(), count);
@@ -54,7 +56,6 @@ public class ProjectService {
             throw new CustomException(ErrorCode.PROJECT_ALREADY_EXISTS);
         }
 
-        // GitHub 레포 실재 여부 확인
         if (!githubApiClient.repositoryExists(req.repoOwner(), req.repoName(), owner.getAccessToken())) {
             throw new CustomException(ErrorCode.REPO_NOT_FOUND);
         }
@@ -66,6 +67,7 @@ public class ProjectService {
                 .repoOwner(req.repoOwner())
                 .repoName(req.repoName())
                 .repoUrl(repoUrl)
+                .phase(ProjectPhase.PLANNING)
                 .weightConfig(Map.of(
                         "COMMIT", 1.0,
                         "PULL_REQUEST", 3.0,
@@ -93,9 +95,7 @@ public class ProjectService {
                 .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_NOT_FOUND));
 
         List<ProjectMemberResponse> members = projectMemberRepository.findByProjectId(projectId)
-                .stream()
-                .map(ProjectMemberResponse::from)
-                .toList();
+                .stream().map(ProjectMemberResponse::from).toList();
 
         return ProjectDetailResponse.from(project, members);
     }
@@ -105,8 +105,7 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public List<ContributionResponse> listContributions(Long projectId) {
         return contributionRepository.findByProjectId(projectId).stream()
-                .map(ContributionResponse::from)
-                .toList();
+                .map(ContributionResponse::from).toList();
     }
 
     // ── 멤버 목록 조회 ────────────────────────────────────────────────────────
@@ -114,9 +113,7 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public List<ProjectMemberResponse> getMembers(Long projectId) {
         return projectMemberRepository.findByProjectId(projectId)
-                .stream()
-                .map(ProjectMemberResponse::from)
-                .toList();
+                .stream().map(ProjectMemberResponse::from).toList();
     }
 
     // ── 멤버 초대 ─────────────────────────────────────────────────────────────
@@ -155,11 +152,43 @@ public class ProjectService {
                 .findByProjectIdAndUserId(projectId, targetUserId)
                 .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_MEMBER_NOT_FOUND));
 
-        if (target.getRole() == MemberRole.OWNER) {
-            throw new CustomException(ErrorCode.FORBIDDEN);
-        }
+        if (target.getRole() == MemberRole.OWNER) throw new CustomException(ErrorCode.FORBIDDEN);
 
         projectMemberRepository.delete(target);
+    }
+
+    // ── PLANNING → ACTIVE 강제 전환 (INITIAL 계약 없이, OWNER 전용) ─────────
+
+    @Transactional
+    public void activateProject(Long projectId, Long requestUserId) {
+        requireOwner(projectId, requestUserId);
+
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_NOT_FOUND));
+
+        if (project.getPhase() != ProjectPhase.PLANNING) {
+            throw new CustomException(ErrorCode.INVALID_PROJECT_PHASE);
+        }
+
+        project.startProject();
+    }
+
+    // ── 프로젝트 종료 (ACTIVE → COMPLETED, FINAL 계약 자동 생성) ─────────────
+
+    @Transactional
+    public ContractResponse completeProject(Long projectId, Long requestUserId) {
+        requireOwner(projectId, requestUserId);
+
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROJECT_NOT_FOUND));
+
+        if (project.getPhase() != ProjectPhase.ACTIVE) {
+            throw new CustomException(ErrorCode.INVALID_PROJECT_PHASE);
+        }
+
+        project.completeProject();
+
+        return contractService.createFinalContract(project);
     }
 
     // ── 가중치 설정 ───────────────────────────────────────────────────────────
@@ -175,9 +204,7 @@ public class ProjectService {
         project.updateWeightConfig(weightConfig);
 
         List<ProjectMemberResponse> members = projectMemberRepository.findByProjectId(projectId)
-                .stream()
-                .map(ProjectMemberResponse::from)
-                .toList();
+                .stream().map(ProjectMemberResponse::from).toList();
 
         return ProjectDetailResponse.from(project, members);
     }
@@ -188,24 +215,14 @@ public class ProjectService {
     public void deleteProject(Long projectId, Long requestUserId) {
         requireOwner(projectId, requestUserId);
 
-        // 1. Signature 삭제 (Contract → Signature 순)
         List<Long> contractIds = contractRepository.findByProjectId(projectId)
                 .stream().map(Contract::getId).collect(Collectors.toList());
         contractIds.forEach(cid -> signatureRepository.deleteAll(signatureRepository.findByContractId(cid)));
 
-        // 2. EquitySnapshot 삭제
         snapshotRepository.deleteAll(snapshotRepository.findByProjectIdOrderBySnapshotAtDesc(projectId));
-
-        // 3. Contribution 삭제
         contributionRepository.deleteAll(contributionRepository.findByProjectId(projectId));
-
-        // 4. Contract 삭제
         contractRepository.deleteAll(contractRepository.findByProjectId(projectId));
-
-        // 5. ProjectMember 삭제
         projectMemberRepository.deleteAll(projectMemberRepository.findByProjectId(projectId));
-
-        // 6. Project 삭제
         projectRepository.deleteById(projectId);
     }
 
@@ -219,9 +236,7 @@ public class ProjectService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
 
-        if (user.getAccessToken() == null) {
-            throw new CustomException(ErrorCode.GITHUB_API_ERROR);
-        }
+        if (user.getAccessToken() == null) throw new CustomException(ErrorCode.GITHUB_API_ERROR);
 
         return contributionCollectionService.collectAll(project, user.getAccessToken());
     }

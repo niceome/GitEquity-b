@@ -1,6 +1,7 @@
 package com.equicode.gitequity.contract.dto;
 
 import com.equicode.gitequity.domain.ContractStatus;
+import com.equicode.gitequity.domain.ContractType;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -9,6 +10,7 @@ public record ContractDetailResponse(
         Long id,
         Long projectId,
         String projectName,
+        ContractType contractType,
         ContractStatus status,
         String pdfUrl,
         LocalDateTime createdAt,

@@ -30,9 +30,17 @@ public enum ErrorCode {
     SIGNATURE_NOT_FOUND(HttpStatus.NOT_FOUND, "서명 대상자가 아닙니다."),
     ALREADY_SIGNED(HttpStatus.CONFLICT, "이미 서명한 계약입니다."),
 
+    // 프로젝트 단계
+    INVALID_PROJECT_PHASE(HttpStatus.BAD_REQUEST, "현재 프로젝트 단계에서 허용되지 않는 작업입니다."),
+
     // GitHub
     GITHUB_API_ERROR(HttpStatus.BAD_GATEWAY, "GitHub API 오류가 발생했습니다."),
-    REPO_NOT_FOUND(HttpStatus.BAD_REQUEST, "GitHub 레포지토리를 찾을 수 없습니다. owner/repo 이름을 확인하세요.");
+    REPO_NOT_FOUND(HttpStatus.BAD_REQUEST, "GitHub 레포지토리를 찾을 수 없습니다. owner/repo 이름을 확인하세요."),
+
+    // 비코드 기여 인정 요청 (claim)
+    CLAIM_NOT_FOUND(HttpStatus.NOT_FOUND, "기여 인정 요청을 찾을 수 없습니다."),
+    SELF_CLAIM_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "본인을 수혜자로 지정할 수 없습니다."),
+    CLAIM_ALREADY_PROCESSED(HttpStatus.BAD_REQUEST, "이미 처리된 요청입니다.");
 
     private final HttpStatus status;
     private final String message;

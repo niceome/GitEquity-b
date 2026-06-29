@@ -9,6 +9,9 @@ import java.time.OffsetDateTime;
 @Slf4j
 final class CollectorUtils {
 
+    // 남은 호출 횟수가 이 값 미만이면 경고 로그
+    private static final int RATE_LIMIT_WARNING_THRESHOLD = 50;
+
     private CollectorUtils() {}
 
     static LocalDateTime parseIso(String iso) {
@@ -24,6 +27,15 @@ final class CollectorUtils {
             Thread.sleep(waitMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    // 남은 호출 횟수가 임계치 미만이면 경고 로그만 남김 (대기하지 않음)
+    static void warnIfRateLimitLow(RateLimitInfo info) {
+        if (info == null) return;
+        if (info.remaining() < RATE_LIMIT_WARNING_THRESHOLD) {
+            log.warn("GitHub rate limit low — remaining={}, resetAt={}",
+                    info.remaining(), info.resetEpochSeconds());
         }
     }
 }

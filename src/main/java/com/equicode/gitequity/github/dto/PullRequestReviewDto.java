@@ -4,6 +4,7 @@ package com.equicode.gitequity.github.dto;
 public record PullRequestReviewDto(
         Long id,
         GitHubUser user,
+        String body,
         String state,           // "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED"
         String submittedAt
 ) {}

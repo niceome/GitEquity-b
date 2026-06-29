@@ -17,13 +17,15 @@ import java.util.List;
  *  Dave   — 균형형  : PR×8,  Commit×12, Review×10, Issue×10
  *  Eve    — Issue 위주 : PR×3,  Commit×5,  Review×5,  Issue×25
  *
- * 기본 가중치(COMMIT=1.0, PR=3.0, REVIEW=0.5, ISSUE=0.5) 적용 시 기대 점수:
- *  Alice  66.5  (1위)
- *  Bob    57.5  (2위)
- *  Dave   46.0  (3위)
- *  Carol  31.5  (4위)
- *  Eve    29.0  (5위)
- *  합계  230.5
+ * COMMIT/PR은 TypeScoreCalculator 집계에서 제외된다
+ * (측정 단위가 PrContribution 기반 "PR 최종 diff 실질 변경량"으로 이전됨).
+ * 기본 가중치(REVIEW=0.5, ISSUE=0.5) 적용 시 REVIEW+ISSUE만 반영한 기대 점수:
+ *  Carol  17.5  (1위, review30×0.5 + issue5×0.5)
+ *  Eve    15.0  (2위)
+ *  Dave   10.0  (3위)
+ *  Bob     2.5  (4위)
+ *  Alice   1.5  (5위)
+ *  합계   46.5
  */
 public final class ContributionFixture {
 
@@ -45,13 +47,13 @@ public final class ContributionFixture {
             .owner(ALICE)
             .build();
 
-    // ── 기대 점수 상수 (검증 시 직접 비교) ────────────────────────────────────
-    public static final double ALICE_EXPECTED = 66.5;
-    public static final double BOB_EXPECTED   = 57.5;
-    public static final double CAROL_EXPECTED = 31.5;
-    public static final double DAVE_EXPECTED  = 46.0;
-    public static final double EVE_EXPECTED   = 29.0;
-    public static final double TOTAL_EXPECTED = 230.5;
+    // ── 기대 점수 상수 (검증 시 직접 비교, REVIEW+ISSUE만 반영) ────────────────
+    public static final double ALICE_EXPECTED = 1.5;
+    public static final double BOB_EXPECTED   = 2.5;
+    public static final double CAROL_EXPECTED = 17.5;
+    public static final double DAVE_EXPECTED  = 10.0;
+    public static final double EVE_EXPECTED   = 15.0;
+    public static final double TOTAL_EXPECTED = 46.5;
 
     // ── 사용자별 기여 목록 ────────────────────────────────────────────────────
 

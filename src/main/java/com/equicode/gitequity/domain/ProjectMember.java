@@ -36,4 +36,11 @@ public class ProjectMember {
 
     @Column(nullable = false)
     private LocalDateTime joinedAt;
+
+    // 목표 지분 (%) — PLANNING 단계에서 각 멤버가 설정
+    private Double targetEquity;
+
+    public void setTargetEquity(double equity) {
+        this.targetEquity = equity;
+    }
 }

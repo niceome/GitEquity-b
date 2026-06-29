@@ -4,9 +4,10 @@ public record CollectionResult(
         int commits,
         int pullRequests,
         int reviews,
-        int issues
+        int issues,
+        int prContributions
 ) {
     public int total() {
-        return commits + pullRequests + reviews + issues;
+        return commits + pullRequests + reviews + issues + prContributions;
     }
 }

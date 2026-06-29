@@ -30,7 +30,7 @@ dependencies {
 
 
 	// Database
-	runtimeOnly 'org.postgresql:postgresql'
+	implementation 'org.postgresql:postgresql'
 
 	// JWT
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.5'

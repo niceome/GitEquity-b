@@ -19,11 +19,14 @@ public class ContributionCollectionService {
     private final PullRequestCollectorService pullRequestCollectorService;
     private final ReviewCollectorService reviewCollectorService;
     private final IssueCollectorService issueCollectorService;
+    private final PrContributionCollectorService prContributionCollectorService;
+    private final CcnCollectorService ccnCollectorService;
+    private final FileImportanceCollectorService fileImportanceCollectorService;
 
     @Qualifier("collectorExecutor")
     private final Executor collectorExecutor;
 
-    // 4가지 유형을 병렬 수집 후 결과 반환 (동기 블로킹)
+    // 5가지 유형을 병렬 수집 후 CCN·파일중요도 순차 보강
     public CollectionResult collectAll(Project project, String token) {
         log.info("[Collection] start project={}", project.getRepoName());
 
@@ -35,18 +38,25 @@ public class ContributionCollectionService {
                 () -> reviewCollectorService.collect(project, token), collectorExecutor);
         CompletableFuture<Integer> issueFuture = CompletableFuture.supplyAsync(
                 () -> issueCollectorService.collect(project, token), collectorExecutor);
+        CompletableFuture<Integer> prContributionFuture = CompletableFuture.supplyAsync(
+                () -> prContributionCollectorService.collect(project, token), collectorExecutor);
 
-        CompletableFuture.allOf(commitFuture, prFuture, reviewFuture, issueFuture).join();
+        CompletableFuture.allOf(commitFuture, prFuture, reviewFuture, issueFuture, prContributionFuture).join();
 
         CollectionResult result = new CollectionResult(
                 commitFuture.join(),
                 prFuture.join(),
                 reviewFuture.join(),
-                issueFuture.join());
+                issueFuture.join(),
+                prContributionFuture.join());
 
-        log.info("[Collection] done project={} total={} (commit={}, pr={}, review={}, issue={})",
+        log.info("[Collection] done project={} total={} (commit={}, pr={}, review={}, issue={}, prContribution={})",
                 project.getRepoName(), result.total(),
-                result.commits(), result.pullRequests(), result.reviews(), result.issues());
+                result.commits(), result.pullRequests(), result.reviews(), result.issues(), result.prContributions());
+
+        // 기여 저장 완료 후 CCN·파일중요도 보강 (COMMIT + PR 대상)
+        fileImportanceCollectorService.collect(project, token);
+        ccnCollectorService.collect(project, token);
 
         return result;
     }

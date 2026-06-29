@@ -24,8 +24,8 @@ class TypeScoreCalculatorTest {
     // ── 1. 합산 점수 검증 ──────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("5명 전체 합산 점수가 230.5 이어야 한다")
-    void totalScore_shouldBe230_5() {
+    @DisplayName("5명 전체 합산 점수가 46.5 이어야 한다 (REVIEW+ISSUE만 반영)")
+    void totalScore_shouldBe46_5() {
         var scores = calculator.calculate(allContributions(), null);
 
         double grandTotal = scores.values().stream()
@@ -64,19 +64,19 @@ class TypeScoreCalculatorTest {
     // ── 3. 순위 검증 ───────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("기본 가중치에서 PR 위주인 Alice가 1위여야 한다")
-    void ranking_aliceShouldBeFirst_withDefaultWeights() {
+    @DisplayName("기본 가중치에서 Review 위주인 Carol이 1위여야 한다")
+    void ranking_carolShouldBeFirst_withDefaultWeights() {
         var scores = calculator.calculate(allContributions(), null);
 
         UserScore top = scores.values().stream()
                 .max(java.util.Comparator.comparingDouble(UserScore::total))
                 .orElseThrow();
 
-        assertThat(top.username()).isEqualTo("alice");
+        assertThat(top.username()).isEqualTo("carol");
     }
 
     @Test
-    @DisplayName("기본 가중치에서 순위는 Alice > Bob > Dave > Carol > Eve 순이어야 한다")
+    @DisplayName("기본 가중치에서 순위는 Carol > Eve > Dave > Bob > Alice 순이어야 한다")
     void ranking_shouldBeInCorrectOrder_withDefaultWeights() {
         var scores = calculator.calculate(allContributions(), null);
 
@@ -85,35 +85,33 @@ class TypeScoreCalculatorTest {
                 .map(UserScore::username)
                 .toList();
 
-        assertThat(ranked).containsExactly("alice", "bob", "dave", "carol", "eve");
+        assertThat(ranked).containsExactly("carol", "eve", "dave", "bob", "alice");
     }
 
     // ── 4. 커스텀 가중치 변경 시 결과 변화 ────────────────────────────────────
 
     @Test
-    @DisplayName("PR 가중치를 0으로 낮추면 Alice가 1위에서 탈락해야 한다")
-    void customWeight_prZero_aliceShouldNotBeFirst() {
-        Map<String, Double> customWeights = Map.of("PR", 0.0);
-        var scores = calculator.calculate(allContributions(), customWeights);
+    @DisplayName("PR 가중치를 변경해도 총점은 변하지 않아야 한다 (PR은 집계 대상 제외)")
+    void customWeight_pr_hasNoEffectOnTotal() {
+        var defaultScores = calculator.calculate(allContributions(), null);
+        double defaultTotal = defaultScores.values().stream().mapToDouble(UserScore::total).sum();
 
-        UserScore top = scores.values().stream()
-                .max(java.util.Comparator.comparingDouble(UserScore::total))
-                .orElseThrow();
+        var customScores = calculator.calculate(allContributions(), Map.of("PR", 100.0));
+        double customTotal = customScores.values().stream().mapToDouble(UserScore::total).sum();
 
-        assertThat(top.username()).isNotEqualTo("alice");
+        assertThat(customTotal).isCloseTo(defaultTotal, within(0.001));
     }
 
     @Test
-    @DisplayName("PR 가중치를 0으로 낮추면 Commit 위주 Bob이 1위가 되어야 한다")
-    void customWeight_prZero_bobShouldBeFirst() {
-        Map<String, Double> customWeights = Map.of("PR", 0.0);
-        var scores = calculator.calculate(allContributions(), customWeights);
+    @DisplayName("COMMIT 가중치를 변경해도 총점은 변하지 않아야 한다 (COMMIT은 집계 대상 제외)")
+    void customWeight_commit_hasNoEffectOnTotal() {
+        var defaultScores = calculator.calculate(allContributions(), null);
+        double defaultTotal = defaultScores.values().stream().mapToDouble(UserScore::total).sum();
 
-        UserScore top = scores.values().stream()
-                .max(java.util.Comparator.comparingDouble(UserScore::total))
-                .orElseThrow();
+        var customScores = calculator.calculate(allContributions(), Map.of("COMMIT", 100.0));
+        double customTotal = customScores.values().stream().mapToDouble(UserScore::total).sum();
 
-        assertThat(top.username()).isEqualTo("bob");
+        assertThat(customTotal).isCloseTo(defaultTotal, within(0.001));
     }
 
     @Test
@@ -132,14 +130,15 @@ class TypeScoreCalculatorTest {
     // ── 5. byType breakdown 검증 ──────────────────────────────────────────────
 
     @Test
-    @DisplayName("Alice의 PR 점수는 60.0 이어야 한다 (20건 × 3.0)")
-    void byType_alicePrScore_shouldBe60() {
+    @DisplayName("PR/COMMIT 기여는 byType 집계에서 제외되어야 한다")
+    void byType_prAndCommit_excludedFromAggregation() {
         var scores = calculator.calculate(aliceContributions(), null);
 
-        double prScore = scores.get(ALICE.getId()).byType()
-                .getOrDefault(ContributionType.PR, 0.0);
+        var byType = scores.get(ALICE.getId()).byType();
 
-        assertThat(prScore).isCloseTo(60.0, within(0.001));
+        assertThat(byType).doesNotContainKey(ContributionType.PR);
+        assertThat(byType).doesNotContainKey(ContributionType.COMMIT);
+        assertThat(byType).containsKeys(ContributionType.REVIEW, ContributionType.ISSUE);
     }
 
     // ── 6. 빈 목록 처리 ───────────────────────────────────────────────────────

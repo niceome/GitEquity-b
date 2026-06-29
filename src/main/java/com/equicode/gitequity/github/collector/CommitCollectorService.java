@@ -5,6 +5,7 @@ import com.equicode.gitequity.domain.ContributionType;
 import com.equicode.gitequity.domain.Project;
 import com.equicode.gitequity.domain.User;
 import com.equicode.gitequity.github.GithubApiClient;
+import com.equicode.gitequity.github.GithubApiException;
 import com.equicode.gitequity.github.dto.CommitDto;
 import com.equicode.gitequity.github.dto.PagedResponse;
 import com.equicode.gitequity.repository.ContributionRepository;
@@ -33,8 +34,17 @@ public class CommitCollectorService {
         int page = 1;
 
         while (true) {
-            PagedResponse<CommitDto> response = githubApiClient.fetchCommits(
-                    project.getRepoOwner(), project.getRepoName(), page, token);
+            PagedResponse<CommitDto> response;
+            try {
+                response = githubApiClient.fetchCommits(
+                        project.getRepoOwner(), project.getRepoName(), page, token);
+            } catch (GithubApiException e) {
+                if (e.getStatusCode() == 409) {
+                    log.info("[Commit] project={} repo is empty", project.getRepoName());
+                    break;
+                }
+                throw e;
+            }
 
             for (CommitDto dto : response.items()) {
                 // GitHub 계정 미연동 커밋 또는 봇 제외

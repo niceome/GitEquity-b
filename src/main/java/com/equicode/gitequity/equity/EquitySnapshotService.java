@@ -18,11 +18,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class EquitySnapshotService {
 
-    private final EquityCalculatorService  equityCalculatorService;
-    private final ProjectRepository        projectRepository;
-    private final UserRepository           userRepository;
-    private final ContributionRepository   contributionRepository;
-    private final EquitySnapshotRepository snapshotRepository;
+    private final EquityCalculatorService    equityCalculatorService;
+    private final ProjectRepository          projectRepository;
+    private final UserRepository             userRepository;
+    private final ContributionRepository     contributionRepository;
+    private final PrContributionRepository   prContributionRepository;
+    private final EquitySnapshotRepository   snapshotRepository;
 
     // ── 스냅샷 생성 ───────────────────────────────────────────────────────────
 
@@ -38,12 +39,16 @@ public class EquitySnapshotService {
             return SnapshotSummary.empty(projectId);
         }
 
-        // 기여 타입별 건수 집계: userId → (type → count)
+        // COMMIT / REVIEW / ISSUE 건수: contributions 테이블에서 집계 (userId 기준)
         Map<Long, Map<ContributionType, Long>> countsByUser =
                 contributionRepository.findByProjectId(projectId).stream()
                         .collect(Collectors.groupingBy(
                                 c -> c.getUser().getId(),
                                 Collectors.groupingBy(Contribution::getType, Collectors.counting())));
+
+        // PR 건수: pr_contributions 테이블에서 집계 (authorGithubId → user.githubId로 매핑)
+        Map<Long, Long> prCountByGithubId = prContributionRepository.findByProjectId(projectId).stream()
+                .collect(Collectors.groupingBy(PrContribution::getAuthorGithubId, Collectors.counting()));
 
         LocalDateTime snapshotAt = equityResult.calculatedAt();
         List<EquitySnapshot> toSave = new ArrayList<>();
@@ -53,13 +58,14 @@ public class EquitySnapshotService {
             if (user == null) continue;
 
             Map<ContributionType, Long> counts = countsByUser.getOrDefault(equity.userId(), Map.of());
+            int prCount = prCountByGithubId.getOrDefault(user.getGithubId(), 0L).intValue();
 
             toSave.add(EquitySnapshot.builder()
                     .project(project)
                     .user(user)
                     .percentage(equity.percentage())
                     .totalCommits(count(counts, ContributionType.COMMIT))
-                    .totalPrs(count(counts, ContributionType.PR))
+                    .totalPrs(prCount)
                     .totalReviews(count(counts, ContributionType.REVIEW))
                     .totalIssues(count(counts, ContributionType.ISSUE))
                     .rawScore(equity.rawScore())

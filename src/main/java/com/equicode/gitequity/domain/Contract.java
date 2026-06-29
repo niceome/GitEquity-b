@@ -28,8 +28,17 @@ public class Contract {
     @Column(nullable = false)
     private ContractStatus status;
 
-    // EquitySnapshot 여러 건을 논리적으로 묶는 그룹 ID (snapshot_at 기준 동일 시각 묶음)
-    @Column(nullable = false)
+    // INITIAL: 목표 지분 합의서 / FINAL: 최종 기여도 확정서
+    // null이면 FINAL로 간주 (기존 데이터 호환)
+    @Getter(AccessLevel.NONE)
+    @Enumerated(EnumType.STRING)
+    private ContractType contractType;
+
+    public ContractType getContractType() {
+        return contractType != null ? contractType : ContractType.FINAL;
+    }
+
+    // EquitySnapshot 여러 건을 논리적으로 묶는 그룹 ID (INITIAL 계약에서는 null)
     private Long snapshotGroupId;
 
     // iText7로 생성 후 S3 업로드된 PDF URL

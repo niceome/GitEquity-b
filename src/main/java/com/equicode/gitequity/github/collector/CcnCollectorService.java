@@ -39,30 +39,47 @@ public class CcnCollectorService {
             return 0;
         }
 
-        List<Contribution> prContributions =
-                contributionRepository.findByProjectIdAndType(project.getId(), ContributionType.PR);
-
         int updated = 0;
-        for (Contribution contribution : prContributions) {
-            try {
-                double ccnScore = analyzePr(project, token, Integer.parseInt(contribution.getGithubId()));
-                contribution.applyCcnScore(ccnScore, ContributionType.PR.getWeight());
-                updated++;
-            } catch (Exception e) {
-                log.warn("[CCN] failed to analyze PR={} project={}: {}",
-                        contribution.getGithubId(), project.getRepoName(), e.getMessage());
-            }
-        }
+        updated += enrichType(project, token, ContributionType.PR);
+        updated += enrichType(project, token, ContributionType.COMMIT);
 
-        log.info("[CCN] project={} updated={}/{}", project.getRepoName(), updated, prContributions.size());
+        log.info("[CCN] project={} total updated={}", project.getRepoName(), updated);
         return updated;
     }
 
-    // ── PR 변경 파일 전체를 분석하여 평균 ccnScore 반환 ───────────────────────
+    private int enrichType(Project project, String token, ContributionType type) {
+        List<Contribution> contributions =
+                contributionRepository.findByProjectIdAndType(project.getId(), type);
 
-    private double analyzePr(Project project, String token, int pullNumber) {
-        List<PullRequestFileDto> files = fetchAllPrFiles(project, token, pullNumber);
+        int updated = 0;
+        for (Contribution contribution : contributions) {
+            try {
+                List<PullRequestFileDto> files = fetchFiles(project, token, type, contribution.getGithubId());
+                double ccnScore = analyzeFiles(project, token, files);
+                contribution.applyCcnScore(ccnScore, type.getWeight());
+                updated++;
+            } catch (Exception e) {
+                log.warn("[CCN] failed to analyze {}={} project={}: {}",
+                        type, contribution.getGithubId(), project.getRepoName(), e.getMessage());
+            }
+        }
 
+        log.info("[CCN] project={} type={} updated={}/{}", project.getRepoName(), type, updated, contributions.size());
+        return updated;
+    }
+
+    private List<PullRequestFileDto> fetchFiles(Project project, String token,
+                                                ContributionType type, String githubId) {
+        if (type == ContributionType.PR) {
+            return fetchAllPrFiles(project, token, Integer.parseInt(githubId));
+        }
+        return githubApiClient.fetchCommitFiles(
+                project.getRepoOwner(), project.getRepoName(), githubId, token);
+    }
+
+    // ── 파일 목록을 분석하여 평균 ccnScore 반환 ───────────────────────────────
+
+    private double analyzeFiles(Project project, String token, List<PullRequestFileDto> files) {
         List<Double> scores = new ArrayList<>();
         for (PullRequestFileDto file : files) {
             if (!file.isAnalyzable()) continue;
@@ -74,17 +91,15 @@ public class CcnCollectorService {
 
                 CcnResult result = ccnAnalyzer.analyze(content.decodeContent(), file.filename());
                 scores.add(result.ccnScore());
-                log.debug("[CCN] {} avgCcn={:.2f} ccnScore={:.2f}",
-                        file.filename(), result.avgCcn(), result.ccnScore());
             } catch (Exception e) {
                 log.debug("[CCN] skip file={}: {}", file.filename(), e.getMessage());
             }
 
-            CollectorUtils.waitIfExhausted(null);  // 파일별 rate limit 체크는 생략 (호출자 책임)
+            CollectorUtils.waitIfExhausted(null);
         }
 
         OptionalDouble avg = scores.stream().mapToDouble(Double::doubleValue).average();
-        return avg.orElse(1.0);  // 분석 가능한 파일 없으면 기본값
+        return avg.orElse(1.0);
     }
 
     private List<PullRequestFileDto> fetchAllPrFiles(Project project, String token, int pullNumber) {

@@ -1,6 +1,7 @@
 package com.equicode.gitequity.project.dto;
 
 import com.equicode.gitequity.domain.Project;
+import com.equicode.gitequity.domain.ProjectPhase;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,6 +16,7 @@ public record ProjectDetailResponse(
         Map<String, Double> weightConfig,
         int memberCount,
         LocalDateTime createdAt,
+        ProjectPhase phase,
         List<ProjectMemberResponse> members
 ) {
     public static ProjectDetailResponse from(Project p, List<ProjectMemberResponse> members) {
@@ -27,6 +29,7 @@ public record ProjectDetailResponse(
                 p.getWeightConfig(),
                 members.size(),
                 p.getCreatedAt(),
+                p.getPhase(),
                 members);
     }
 }

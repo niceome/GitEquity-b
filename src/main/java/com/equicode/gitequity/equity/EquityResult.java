@@ -11,7 +11,8 @@ public record EquityResult(
         Long projectId,
         List<UserEquity> equities,
         double totalRawScore,
-        LocalDateTime calculatedAt
+        LocalDateTime calculatedAt,
+        String algorithmVersion
 ) {
     /** 특정 사용자의 지분 조회 */
     public UserEquity forUser(Long userId) {

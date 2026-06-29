@@ -54,6 +54,23 @@ public class GithubApiClient {
                 .block();
     }
 
+    // 병합 여부와 무관하게 종료된 PR만 조회 (open PR은 "최종 diff"가 아니므로 제외)
+    public PagedResponse<PullRequestDto> fetchClosedPullRequests(String owner, String repo, int page, String token) {
+        return githubWebClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/repos/{owner}/{repo}/pulls")
+                        .queryParam("state", "closed")
+                        .queryParam("per_page", 100)
+                        .queryParam("page", page)
+                        .build(owner, repo))
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toEntityList(PullRequestDto.class)
+                .map(resp -> PagedResponse.from(resp.getBody(), resp.getHeaders()))
+                .block();
+    }
+
     // ── Reviews ───────────────────────────────────────────────────────────────
 
     public PagedResponse<PullRequestReviewDto> fetchPullRequestReviews(
@@ -68,6 +85,41 @@ public class GithubApiClient {
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, this::handleError)
                 .toEntityList(PullRequestReviewDto.class)
+                .map(resp -> PagedResponse.from(resp.getBody(), resp.getHeaders()))
+                .block();
+    }
+
+    // ── PR 인라인 코드 리뷰 코멘트 ───────────────────────────────────────────────
+
+    public PagedResponse<PullRequestReviewCommentDto> fetchPullRequestReviewComments(
+            String owner, String repo, int pullNumber, int page, String token) {
+        return githubWebClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/repos/{owner}/{repo}/pulls/{pull_number}/comments")
+                        .queryParam("per_page", 100)
+                        .queryParam("page", page)
+                        .build(owner, repo, pullNumber))
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toEntityList(PullRequestReviewCommentDto.class)
+                .map(resp -> PagedResponse.from(resp.getBody(), resp.getHeaders()))
+                .block();
+    }
+
+    // ── 이슈/PR 본문 코멘트 (repo 전체) ───────────────────────────────────────────
+
+    public PagedResponse<IssueCommentDto> fetchIssueComments(String owner, String repo, int page, String token) {
+        return githubWebClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/repos/{owner}/{repo}/issues/comments")
+                        .queryParam("per_page", 100)
+                        .queryParam("page", page)
+                        .build(owner, repo))
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toEntityList(IssueCommentDto.class)
                 .map(resp -> PagedResponse.from(resp.getBody(), resp.getHeaders()))
                 .block();
     }
@@ -108,6 +160,20 @@ public class GithubApiClient {
                 .block();
     }
 
+    // ── 커밋 변경 파일 목록 ───────────────────────────────────────────────────
+    // GitHub은 커밋당 최대 300개 파일을 단일 응답으로 반환 (페이지네이션 없음)
+
+    public List<PullRequestFileDto> fetchCommitFiles(String owner, String repo, String sha, String token) {
+        CommitFilesDto response = githubWebClient.get()
+                .uri("/repos/{owner}/{repo}/commits/{sha}", owner, repo, sha)
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .bodyToMono(CommitFilesDto.class)
+                .block();
+        return response != null ? response.safeFiles() : List.of();
+    }
+
     // ── 파일 내용 (base64) ────────────────────────────────────────────────────
 
     public FileContentDto fetchFileContent(String owner, String repo, String path, String token) {
@@ -146,8 +212,13 @@ public class GithubApiClient {
         return response.bodyToMono(String.class)
                 .defaultIfEmpty("")
                 .flatMap(body -> {
-                    log.error("GitHub API error: status={}, body={}", response.statusCode(), body);
-                    return Mono.error(new GithubApiException(response.statusCode().value(), body));
+                    int status = response.statusCode().value();
+                    if (status == 404) {
+                        log.debug("GitHub API 404: {}", body);
+                    } else {
+                        log.error("GitHub API error: status={}, body={}", response.statusCode(), body);
+                    }
+                    return Mono.error(new GithubApiException(status, body));
                 });
     }
 }

@@ -16,7 +16,7 @@ public class AsyncConfig {
     @Bean(name = "collectorExecutor")
     public Executor collectorExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);       // 4가지 기여 유형 동시 수집
+        executor.setCorePoolSize(5);       // 5가지 기여 유형 동시 수집
         executor.setMaxPoolSize(8);
         executor.setQueueCapacity(100);
         executor.setKeepAliveSeconds(60);

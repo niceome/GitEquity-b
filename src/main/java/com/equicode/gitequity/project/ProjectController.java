@@ -2,6 +2,7 @@ package com.equicode.gitequity.project;
 
 import com.equicode.gitequity.auth.UserPrincipal;
 import com.equicode.gitequity.common.response.ApiResponse;
+import com.equicode.gitequity.contract.dto.ContractResponse;
 import com.equicode.gitequity.github.collector.CollectionResult;
 import com.equicode.gitequity.project.dto.*;
 import lombok.RequiredArgsConstructor;
@@ -66,6 +67,24 @@ public class ProjectController {
         return ApiResponse.ok("member removed", null);
     }
 
+    // PLANNING → ACTIVE 강제 전환 (INITIAL 계약 없이, OWNER 전용)
+    @PostMapping("/{projectId}/activate")
+    public ApiResponse<Void> activateProject(
+            @PathVariable Long projectId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        projectService.activateProject(projectId, principal.getId());
+        return ApiResponse.ok("project activated", null);
+    }
+
+    // 프로젝트 종료 → FINAL 계약 자동 생성 (OWNER 전용)
+    @PostMapping("/{projectId}/complete")
+    public ApiResponse<ContractResponse> completeProject(
+            @PathVariable Long projectId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok("project completed",
+                projectService.completeProject(projectId, principal.getId()));
+    }
+
     @DeleteMapping("/{projectId}")
     public ApiResponse<Void> delete(
             @PathVariable Long projectId,
@@ -90,4 +109,5 @@ public class ProjectController {
         return ApiResponse.ok("weight config updated",
                 projectService.updateWeightConfig(projectId, principal.getId(), request.weightConfig()));
     }
+
 }

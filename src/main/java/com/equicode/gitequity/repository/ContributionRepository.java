@@ -20,4 +20,7 @@ public interface ContributionRepository extends JpaRepository<Contribution, Long
 
     @Query("SELECT c.user, SUM(c.rawScore) FROM Contribution c WHERE c.project.id = :projectId GROUP BY c.user")
     List<Object[]> findRawScoreSumGroupByUser(@Param("projectId") Long projectId);
+
+    @Query("SELECT c.user.githubId, SUM(c.rawScore) FROM Contribution c WHERE c.project.id = :projectId AND c.type = :type GROUP BY c.user.githubId")
+    List<Object[]> sumScoreByTypeGroupByGithubId(@Param("projectId") Long projectId, @Param("type") ContributionType type);
 }

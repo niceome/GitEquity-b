@@ -36,8 +36,13 @@ public class Signature {
     // 서명 요청 IP (감사 추적용)
     private String ipAddress;
 
-    public void sign(String ipAddress) {
+    // 서명 시점의 지분 산출 알고리즘 버전 (S16, 예: "2.0.0")
+    @Column(name = "algorithm_version")
+    private String algorithmVersion;
+
+    public void sign(String ipAddress, String algorithmVersion) {
         this.signedAt = LocalDateTime.now();
         this.ipAddress = ipAddress;
+        this.algorithmVersion = algorithmVersion;
     }
 }

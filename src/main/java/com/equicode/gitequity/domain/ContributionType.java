@@ -9,7 +9,8 @@ public enum ContributionType {
     COMMIT(1.0),
     PR(3.0),
     REVIEW(0.5),
-    ISSUE(0.5);
+    ISSUE(0.5),
+    COMMENT(1.0);
 
     private final double weight;
 }
